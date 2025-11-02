@@ -1,0 +1,102 @@
+{
+  "Productivity": {
+    "Velocity Points Per Sprint": {
+      "value": 25,
+      "source": "Industry Standard - Agile Metrics",
+      "unit": "Story Points",
+      "category": "Productivity"
+    },
+    "Code Commits Per Week": {
+      "value": 15,
+      "source": "Industry Standard - Development Metrics",
+      "unit": "Commits",
+      "category": "Productivity"
+    },
+    "Lines Of Code Per Day": {
+      "value": 200,
+      "source": "Industry Standard - Development Metrics",
+      "unit": "LOC",
+      "category": "Productivity"
+    }
+  },
+  "Quality": {
+    "Defect Rate": {
+      "value": 0.02,
+      "source": "Industry Standard - Quality Metrics",
+      "unit": "Defects Per 100 LOC",
+      "category": "Quality"
+    },
+    "Code Coverage": {
+      "value": 80,
+      "source": "Industry Standard - Testing Metrics",
+      "unit": "Percentage",
+      "category": "Quality"
+    },
+    "Bug Resolution Time": {
+      "value": 48,
+      "source": "Industry Standard - Support Metrics",
+      "unit": "Hours",
+      "category": "Quality"
+    }
+  },
+  "Velocity": {
+    "Sprint Completion Rate": {
+      "value": 85,
+      "source": "Industry Standard - Agile Metrics",
+      "unit": "Percentage",
+      "category": "Velocity"
+    },
+    "Cycle Time": {
+      "value": 5,
+      "source": "Industry Standard - Process Metrics",
+      "unit": "Days",
+      "category": "Velocity"
+    },
+    "Lead Time": {
+      "value": 10,
+      "source": "Industry Standard - Process Metrics",
+      "unit": "Days",
+      "category": "Velocity"
+    }
+  },
+  "Efficiency": {
+    "Utilization Rate": {
+      "value": 75,
+      "source": "Industry Standard - Resource Metrics",
+      "unit": "Percentage",
+      "category": "Efficiency"
+    },
+    "Throughput": {
+      "value": 12,
+      "source": "Industry Standard - Process Metrics",
+      "unit": "Items Per Week",
+      "category": "Efficiency"
+    },
+    "Waste Percentage": {
+      "value": 15,
+      "source": "Industry Standard - Lean Metrics",
+      "unit": "Percentage",
+      "category": "Efficiency"
+    }
+  },
+  "Customer Satisfaction": {
+    "Net Promoter Score": {
+      "value": 50,
+      "source": "Industry Standard - Customer Metrics",
+      "unit": "Score",
+      "category": "Customer Satisfaction"
+    },
+    "Customer Satisfaction Score": {
+      "value": 4.2,
+      "source": "Industry Standard - Customer Metrics",
+      "unit": "Rating (1-5)",
+      "category": "Customer Satisfaction"
+    },
+    "Response Time": {
+      "value": 2,
+      "source": "Industry Standard - Support Metrics",
+      "unit": "Hours",
+      "category": "Customer Satisfaction"
+    }
+  }
+}
