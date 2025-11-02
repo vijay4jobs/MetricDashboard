@@ -10,7 +10,7 @@ import io
 # Import modules
 from config.settings import Settings, DatabaseConfig
 from data.excel_loader import ExcelLoader
-from data.database import DatabaseManager
+from data.database import DatabaseManager, User
 from data.data_validator import DataValidator
 from components.charts import ChartGenerator
 from components.tables import TableGenerator
@@ -31,6 +31,14 @@ if 'current_data' not in st.session_state:
     st.session_state.current_data = pd.DataFrame()
 if 'mitigation_db' not in st.session_state:
     st.session_state.mitigation_db = MitigationDB()
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'username' not in st.session_state:
+    st.session_state.username = None
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "📊 Dashboard"
 
 
 def load_benchmarks() -> dict:
@@ -66,36 +74,232 @@ def init_database(config: DatabaseConfig):
         return False
 
 
-# Sidebar with app info and quick stats
-with st.sidebar:
-    st.title("📊 Metric Dashboard")
+def show_login_page():
+    """Display login page with login and signup options."""
+    st.title("🔐 Login to Metric Dashboard")
     st.markdown("---")
     
-    # Quick database status
-    if st.session_state.db_manager:
-        db = st.session_state.db_manager
-        summary = db.get_summary_stats()
-        st.success("✅ Database Connected")
-        st.metric("Records", f"{summary.get('total_records', 0):,}")
-        st.metric("Teams", summary.get('teams', 0))
-        st.metric("Metrics", summary.get('metrics', 0))
-    else:
-        st.warning("⚠️ Database Not Connected")
-        st.info("Go to Settings to configure database")
+    # Create tabs for Login and Signup
+    login_tab, signup_tab = st.tabs(["🔐 Login", "📝 Sign Up"])
+    
+    with login_tab:
+        st.markdown("### Enter Your Credentials")
+        
+        # Center the form
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            with st.form("login_form"):
+                username = st.text_input("Username", placeholder="Enter your username", key="login_username")
+                password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_password")
+                login_button = st.form_submit_button("🚀 Login", type="primary", use_container_width=True)
+                
+                if login_button:
+                    if not username or not password:
+                        st.error("⚠️ Please enter both username and password")
+                    else:
+                        # Try to authenticate with default SQLite database first
+                        try:
+                            from config.settings import DatabaseConfig
+                            config = DatabaseConfig(db_type="sqlite", database="metrics.db")
+                            db_manager = DatabaseManager(config)
+                            
+                            # Ensure admin user exists with correct privileges
+                            ensure_admin_user(db_manager)
+                            
+                            user_info = db_manager.authenticate_user(username, password)
+                            if user_info:
+                                st.session_state.authenticated = True
+                                st.session_state.username = user_info['username']
+                                st.session_state.is_admin = user_info.get('is_admin', False)
+                                st.session_state.db_manager = db_manager
+                                st.success(f"✅ Welcome back, {user_info['username']}!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Invalid username or password")
+                        except Exception as e:
+                            st.error(f"❌ Login failed: {str(e)}")
+                            st.info("💡 Make sure the database is initialized. You can sign up in the Sign Up tab.")
+        
+        st.markdown("---")
+        st.info("ℹ️ Don't have an account? Switch to the **Sign Up** tab to create one.")
+    
+    with signup_tab:
+        st.markdown("### Create New Account")
+        st.info("Fill in the details below to create a new account")
+        
+        # Center the form
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            with st.form("signup_form"):
+                new_username = st.text_input("Username", placeholder="Choose a username", key="signup_username")
+                new_password = st.text_input("Password", type="password", placeholder="Choose a password (min 6 characters)", key="signup_password")
+                confirm_password = st.text_input("Confirm Password", type="password", placeholder="Confirm your password", key="signup_confirm_password")
+                new_email = st.text_input("Email (Optional)", placeholder="your.email@example.com", key="signup_email")
+                
+                signup_button = st.form_submit_button("📝 Sign Up", type="primary", use_container_width=True)
+                
+                if signup_button:
+                    # Validation
+                    if not new_username or not new_password:
+                        st.error("⚠️ Username and password are required")
+                    elif len(new_password) < 6:
+                        st.error("⚠️ Password must be at least 6 characters long")
+                    elif new_password != confirm_password:
+                        st.error("⚠️ Passwords do not match")
+                    else:
+                        try:
+                            from config.settings import DatabaseConfig
+                            config = DatabaseConfig(db_type="sqlite", database="metrics.db")
+                            db_manager = DatabaseManager(config)
+                            
+                            # Ensure admin user exists with correct privileges
+                            ensure_admin_user(db_manager)
+                            
+                            # Create new user (non-admin by default)
+                            if db_manager.create_user(new_username, new_password, new_email if new_email else None, is_admin=False):
+                                st.success(f"✅ Account created successfully! You can now login with username: {new_username}")
+                                st.info("ℹ️ Switch to the **Login** tab to sign in")
+                            else:
+                                st.error("❌ Signup failed. Username may already exist. Please try a different username.")
+                        except Exception as e:
+                            st.error(f"❌ Signup failed: {str(e)}")
+                            st.info("💡 Make sure the database is initialized. Run 'python setup_database.py' to initialize.")
+        
+        st.markdown("---")
+        st.info("ℹ️ Already have an account? Switch to the **Login** tab to sign in.")
     
     st.markdown("---")
-    st.caption("Version 1.0 | Metric Dashboard")
+    st.caption("Default database: metrics.db (SQLite)")
 
 
-# Main navigation using tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+def ensure_admin_user(db_manager):
+    """Ensure admin user exists with correct privileges. Fix if needed."""
+    try:
+        # First, ensure is_admin column exists
+        try:
+            from sqlalchemy import text
+            session = db_manager.get_session()
+            try:
+                # Check if column exists (SQLite specific)
+                result = session.execute(text("PRAGMA table_info(users)"))
+                columns = [row[1] for row in result.fetchall()]
+                
+                if 'is_admin' not in columns:
+                    # Add is_admin column
+                    session.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
+                    session.commit()
+            except Exception:
+                pass  # Column might already exist or table might not exist
+            finally:
+                session.close()
+        except Exception:
+            pass
+        
+        # Now check/create admin user
+        session = db_manager.get_session()
+        try:
+            from data.database import User
+            admin_user = session.query(User).filter(User.username == "admin").first()
+            
+            if admin_user:
+                # Check if admin user has correct password (verify)
+                if db_manager.verify_password("admin123", admin_user.password_hash):
+                    # Update is_admin flag if not set
+                    if not admin_user.is_admin:
+                        admin_user.is_admin = True
+                        session.commit()
+                else:
+                    # If password doesn't match, reset it
+                    admin_user.password_hash = db_manager.hash_password("admin123")
+                    admin_user.is_admin = True
+                    session.commit()
+            else:
+                # Create admin user if it doesn't exist
+                db_manager.create_user("admin", "admin123", None, is_admin=True)
+        except Exception as e:
+            # Log error but don't interrupt login flow
+            import traceback
+            traceback.print_exc()
+        finally:
+            session.close()
+    except Exception:
+        # Silently fail - don't show error on login page
+        pass
+
+
+def show_main_app():
+    """Display main application (only if authenticated)."""
+    # Sidebar with app info, navigation, and logout
+    with st.sidebar:
+        st.title("📊 Metric Dashboard")
+        st.markdown("---")
+        
+        # User info
+        if st.session_state.username:
+            st.success(f"👤 Logged in as: **{st.session_state.username}**")
+        
+        # Quick database status
+        if st.session_state.db_manager:
+            db = st.session_state.db_manager
+            try:
+                summary = db.get_summary_stats()
+                st.success("✅ Database Connected")
+                # st.metric("Records", f"{summary.get('total_records', 0):,}")
+                # st.metric("Teams", summary.get('teams', 0))
+                # st.metric("Metrics", summary.get('metrics', 0))
+            except:
+                st.warning("⚠️ Database Error")
+        else:
+            st.warning("⚠️ Database Not Connected")
+            st.info("Go to Settings to configure database")
+        
+        st.markdown("---")
+        
+        # Logout button
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.authenticated = False
+            st.session_state.username = None
+            st.session_state.is_admin = False
+            st.session_state.db_manager = None
+            st.rerun()
+        
+        st.markdown("---")
+        st.caption("Version 1.0 | Metric Dashboard")
+
+
+# Check authentication
+if not st.session_state.authenticated:
+    show_login_page()
+    st.stop()
+
+# Show main app
+show_main_app()
+
+# Main navigation using tabs - conditionally show Settings based on admin status
+tabs_list = [
     "📊 Dashboard",
-    "📥 Data Import", 
+    "📥 Data Query", 
     "⚖️ Team Comparison",
     "🎯 Benchmark Comparison",
-    "🔧 Mitigation Plans",
-    "⚙️ Settings"
-])
+    "🔧 Mitigation Plans"
+]
+
+# Only add Settings tab for admin users
+if st.session_state.is_admin:
+    tabs_list.append("⚙️ Settings")
+
+# Create tabs
+tabs = st.tabs(tabs_list)
+
+# Map tabs to variables
+tab1 = tabs[0]  # Dashboard
+tab2 = tabs[1]  # Data Query
+tab3 = tabs[2]  # Team Comparison
+tab4 = tabs[3]  # Benchmark Comparison
+tab5 = tabs[4]  # Mitigation Plans
+tab6 = tabs[5] if st.session_state.is_admin else None  # Settings (only for admin)
 
 # ==================== DASHBOARD TAB ====================
 with tab1:
@@ -201,87 +405,17 @@ with tab1:
 
 # ==================== DATA IMPORT TAB ====================
 with tab2:
-    st.title("📥 Data Import")
+    st.title("📥 Data Query")
     st.markdown("---")
     
-    sub_tab1, sub_tab2 = st.tabs(["📤 Excel Upload", "🔍 Database Query"])
+    # sub_tab1, sub_tab2 = st.tabs(["📤 Excel Upload", "🔍 Database Query"])
+    sub_tabs = st.tabs(["🔍 Database Query"])
+    sub_tab1 = sub_tabs[0]
     
+    # Excel Upload sub-tab is commented out and not shown.
+    # If you uncomment and need to fix, see below for correct tab usage!
+
     with sub_tab1:
-        st.subheader("Upload Excel File")
-        
-        uploaded_file = st.file_uploader(
-            "Choose an Excel file",
-            type=['xlsx', 'xls'],
-            help="Upload Excel file with metric data"
-        )
-        
-        if uploaded_file:
-            excel_loader = ExcelLoader()
-            validator = DataValidator()
-            
-            # Show sheet selection
-            sheet_names = excel_loader.get_sheet_names(uploaded_file)
-            selected_sheet = st.selectbox("Select Sheet", sheet_names)
-            
-            if selected_sheet:
-                # Load data
-                uploaded_file.seek(0)
-                df = excel_loader.load_excel(uploaded_file, selected_sheet)
-                df = excel_loader.clean_dataframe(df)
-                
-                st.markdown("### 👀 Data Preview")
-                table_gen = TableGenerator()
-                table_gen.display_styled_table(df.head(20), use_container_width=True)
-                
-                st.markdown("### ✅ Data Validation")
-                # Normalize column names
-                df = validator.normalize_column_names(df)
-                
-                is_valid, errors = validator.validate_dataframe(df)
-                
-                if is_valid:
-                    st.success("✅ Data validation passed!")
-                    metadata = excel_loader.extract_metadata(df)
-                    
-                    # Check format
-                    format_type = excel_loader.detect_format(df)
-                    st.info(f"📋 Detected format: **{format_type}**")
-                    
-                    if format_type == 'wide':
-                        if st.button("🔄 Convert to Long Format"):
-                            id_cols = st.multiselect(
-                                "Select ID columns (non-metric columns)",
-                                df.columns.tolist(),
-                                default=metadata.get('team_column', [])
-                            )
-                            if id_cols:
-                                df = excel_loader.normalize_to_long_format(df, id_cols)
-                                table_gen = TableGenerator()
-                                table_gen.display_styled_table(df.head(20), use_container_width=True)
-                    
-                    # Save to database
-                    st.markdown("### 💾 Save to Database")
-                    if st.session_state.db_manager:
-                        if st.button("💾 Save to Database", type="primary"):
-                            try:
-                                inserted = st.session_state.db_manager.insert_metrics(df)
-                                st.success(f"✅ Successfully inserted {inserted} records!")
-                            except Exception as e:
-                                st.error(f"❌ Error saving to database: {str(e)}")
-                    else:
-                        st.warning("⚠️ Please configure database connection in Settings first.")
-                else:
-                    st.error("❌ Data validation failed:")
-                    for error in errors:
-                        st.error(f"  • {error}")
-                    
-                    warnings = validator.warnings
-                    if warnings:
-                        st.warning("⚠️ Warnings:")
-                        for warning in warnings:
-                            st.warning(f"  • {warning}")
-    
-    with sub_tab2:
         st.subheader("Database Query")
         
         if st.session_state.db_manager:
@@ -306,6 +440,9 @@ with tab2:
                 end_date = st.date_input("End Date", value=None)
             
             if st.button("🔍 Query Data", type="primary"):
+                # Make sure datetime is imported at the top of your file!
+                from datetime import datetime
+
                 data = db.query_metrics(
                     teams=selected_teams if selected_teams else None,
                     metrics=selected_metrics if selected_metrics else None,
@@ -322,7 +459,6 @@ with tab2:
                     st.info("ℹ️ No data found for selected filters.")
         else:
             st.warning("⚠️ Please configure database connection in Settings first.")
-
 
 # ==================== TEAM COMPARISON TAB ====================
 with tab3:
@@ -465,37 +601,37 @@ with tab4:
                     
                     st.markdown("---")
                     
-                    # Benchmark charts
-                    st.markdown("### 📊 Visualizations")
-                    chart_gen = ChartGenerator()
-                    
-                    for metric in selected_metrics[:3]:
-                        st.markdown(f"#### {metric}")
-                        fig = chart_gen.benchmark_comparison_chart(
-                            data, selected_benchmarks, metric,
-                            selected_teams[0] if selected_teams else None
-                        )
-                        st.plotly_chart(fig, use_container_width=True, theme="streamlit")
-                    
-                    st.markdown("---")
-                    
-                    # Gap analysis - use comparison_results with capitalized column names
-                    st.markdown("### 📊 Gap Analysis")
-                    for _, row in comparison_results.iterrows():
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("Metric", row['Metric'])
-                        with col2:
-                            st.metric("Actual", f"{row['Actual (Avg)']:.2f}")
-                        with col3:
-                            st.metric("Benchmark", f"{row['Benchmark']:.2f}")
-                        with col4:
-                            # Gap % is stored as string, need to parse it
-                            gap_pct_str = row['Gap %']
-                            gap_pct = float(gap_pct_str.replace('%', ''))
-                            st.metric("Gap", gap_pct_str, 
-                                     delta="Above" if gap_pct > 0 else "Below")
-                        st.markdown("---")
+                    # # Benchmark charts
+                    # st.markdown("### 📊 Visualizations")
+                    # chart_gen = ChartGenerator()
+                    # 
+                    # for metric in selected_metrics[:3]:
+                    #     st.markdown(f"#### {metric}")
+                    #     fig = chart_gen.benchmark_comparison_chart(
+                    #         data, selected_benchmarks, metric,
+                    #         selected_teams[0] if selected_teams else None
+                    #     )
+                    #     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+                    # 
+                    # st.markdown("---")
+                    # 
+                    # # Gap analysis - use comparison_results with capitalized column names
+                    # st.markdown("### 📊 Gap Analysis")
+                    # for _, row in comparison_results.iterrows():
+                    #     col1, col2, col3, col4 = st.columns(4)
+                    #     with col1:
+                    #         st.metric("Metric", row['Metric'])
+                    #     with col2:
+                    #         st.metric("Actual", f"{row['Actual (Avg)']:.2f}")
+                    #     with col3:
+                    #         st.metric("Benchmark", f"{row['Benchmark']:.2f}")
+                    #     with col4:
+                    #         # Gap % is stored as string, need to parse it
+                    #         gap_pct_str = row['Gap %']
+                    #         gap_pct = float(gap_pct_str.replace('%', ''))
+                    #         st.metric("Gap", gap_pct_str, 
+                    #                  delta="Above" if gap_pct > 0 else "Below")
+                    #     st.markdown("---")
                 else:
                     st.info("ℹ️ No data found for selected filters.")
             else:
@@ -657,155 +793,226 @@ with tab5:
 
 
 # ==================== SETTINGS TAB ====================
-with tab6:
-    st.title("⚙️ Settings")
-    st.markdown("---")
-    
-    st.subheader("Database Configuration")
-    
-    db_type = st.selectbox("Database Type", ["sqlite", "postgresql", "mysql"])
-    
-    if db_type == "sqlite":
-        database = st.text_input("Database File", value="metrics.db")
-        config = DatabaseConfig(db_type=db_type, database=database)
-    else:
+if tab6 is not None:  # Only show if user is admin
+    with tab6:
+        st.title("⚙️ Settings")
+        st.markdown("---")
+        
+        st.subheader("Database Configuration")
+        
+        db_type = st.selectbox("Database Type", ["sqlite", "postgresql", "mysql"])
+        
+        if db_type == "sqlite":
+            database = st.text_input("Database File", value="metrics.db")
+            config = DatabaseConfig(db_type=db_type, database=database)
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                host = st.text_input("Host", value="localhost")
+                port = st.number_input("Port", value=5432 if db_type == "postgresql" else 3306, min_value=1, max_value=65535)
+            with col2:
+                database = st.text_input("Database Name", value="metrics")
+            
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            
+            config = DatabaseConfig(
+                db_type=db_type,
+                host=host,
+                port=int(port),
+                database=database,
+                username=username,
+                password=password
+            )
+        
         col1, col2 = st.columns(2)
         with col1:
-            host = st.text_input("Host", value="localhost")
-            port = st.number_input("Port", value=5432 if db_type == "postgresql" else 3306, min_value=1, max_value=65535)
+            if st.button("🔍 Test Connection"):
+                if init_database(config):
+                    st.success("✅ Database connection successful!")
+                else:
+                    st.error("❌ Database connection failed!")
+        
         with col2:
-            database = st.text_input("Database Name", value="metrics")
+            if st.button("💾 Save and Connect", type="primary"):
+                if init_database(config):
+                    st.success("✅ Database connected and saved!")
+                    st.info("Database configuration is saved in session. For permanent storage, use environment variables.")
+                else:
+                    st.error("❌ Failed to connect to database!")
         
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
+        st.markdown("---")
         
-        config = DatabaseConfig(
-            db_type=db_type,
-            host=host,
-            port=int(port),
-            database=database,
-            username=username,
-            password=password
-        )
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔍 Test Connection"):
-            if init_database(config):
-                st.success("✅ Database connection successful!")
+        # User Management Section
+        st.subheader("👥 User Management")
+        st.info("Create new user accounts for dashboard access")
+        
+        user_tab1, user_tab2 = st.tabs(["Create User", "View Users"])
+        
+        with user_tab1:
+            with st.form("create_user_form"):
+                new_username = st.text_input("Username", placeholder="Enter username")
+                new_password = st.text_input("Password", type="password", placeholder="Enter password")
+                new_email = st.text_input("Email (Optional)", placeholder="user@example.com")
+                
+                # Only admin can grant admin privileges
+                is_admin_new = False
+                if st.session_state.is_admin:
+                    is_admin_new = st.checkbox("Grant Admin Privileges", value=False, key="new_user_admin")
+                
+                create_user_btn = st.form_submit_button("➕ Create User", type="primary", use_container_width=True)
+                
+                if create_user_btn:
+                    if not new_username or not new_password:
+                        st.error("⚠️ Username and password are required")
+                    elif len(new_password) < 6:
+                        st.error("⚠️ Password must be at least 6 characters long")
+                    else:
+                        if st.session_state.db_manager:
+                            if st.session_state.db_manager.create_user(new_username, new_password, new_email if new_email else None, is_admin=is_admin_new):
+                                st.success(f"✅ User '{new_username}' created successfully!")
+                            else:
+                                st.error("❌ User creation failed. Username may already exist.")
+                        else:
+                            st.warning("⚠️ Please connect to database first")
+        
+        with user_tab2:
+            if st.session_state.db_manager:
+                try:
+                    users = st.session_state.db_manager.get_all_users()
+                    if users:
+                        user_data = []
+                        for user in users:
+                            user_data.append({
+                                'Username': user['username'],
+                                'Email': user['email'] or 'N/A',
+                                'Admin': 'Yes' if user.get('is_admin', False) else 'No',
+                                'Active': 'Yes' if user['is_active'] else 'No',
+                                'Created': user['created_at'].strftime('%Y-%m-%d') if user['created_at'] else 'N/A',
+                                'Last Login': user['last_login'].strftime('%Y-%m-%d %H:%M') if user['last_login'] else 'Never'
+                            })
+                        user_df = pd.DataFrame(user_data)
+                        table_gen = TableGenerator()
+                        table_gen.display_styled_table(user_df, use_container_width=True)
+                    else:
+                        st.info("ℹ️ No users found. Create a user account first.")
+                except Exception as e:
+                    st.error(f"❌ Error loading users: {str(e)}")
             else:
-                st.error("❌ Database connection failed!")
-    
-    with col2:
-        if st.button("💾 Save and Connect", type="primary"):
-            if init_database(config):
-                st.success("✅ Database connected and saved!")
-                st.info("Database configuration is saved in session. For permanent storage, use environment variables.")
+                st.warning("⚠️ Please connect to database first")
+        
+        st.markdown("---")
+        
+        # Database initialization with dummy data
+        st.subheader("Initialize Database with Dummy Data")
+        st.info("This will create sample metric data in the database (SQLite only)")
+        
+        if st.button("🚀 Initialize Database (SQLite Only)", type="primary"):
+            if db_type != "sqlite":
+                st.warning("⚠️ Dummy data initialization is only available for SQLite databases.")
             else:
-                st.error("❌ Failed to connect to database!")
-    
-    st.markdown("---")
-    
-    # Database initialization with dummy data
-    st.subheader("Initialize Database with Dummy Data")
-    st.info("This will create tables and populate SQLite database with sample data for testing.")
-    
-    if st.button("🚀 Initialize Database (SQLite Only)", type="primary"):
-        if db_type != "sqlite":
-            st.warning("⚠️ Dummy data initialization is only available for SQLite databases.")
-        else:
-            try:
-                from setup_database import create_dummy_data
-                from data.database import MetricData
-                
-                # Initialize database connection
-                if not st.session_state.db_manager:
-                    if not init_database(config):
-                        st.error("Failed to connect to database")
-                        st.stop()
-                
-                db = st.session_state.db_manager
-                
-                # Check if data exists
-                existing_teams = db.get_teams()
-                if existing_teams:
-                    st.info(f"Database already contains {len(existing_teams)} teams. New data will be added to existing data.")
-                
-                # Generate and insert dummy data (6 months = 26 weeks)
-                with st.spinner("Generating and inserting dummy data..."):
-                    dummy_data = create_dummy_data(num_weeks=26)
+                try:
+                    from setup_database import create_dummy_data
+                    from data.database import MetricData
                     
-                    session = db.get_session()
-                    try:
-                        inserted = 0
-                        total = len(dummy_data)
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
+                    # Initialize database connection
+                    if not st.session_state.db_manager:
+                        if not init_database(config):
+                            st.error("Failed to connect to database")
+                            st.stop()
+                    
+                    db = st.session_state.db_manager
+                    
+                    # Check if data exists
+                    existing_teams = db.get_teams()
+                    if existing_teams:
+                        st.info(f"Database already contains {len(existing_teams)} teams. New data will be added to existing data.")
+                    
+                    # Generate and insert dummy data (6 months = 26 weeks)
+                    with st.spinner("Generating and inserting dummy data..."):
+                        dummy_data = create_dummy_data(num_weeks=26)
                         
-                        for i, data in enumerate(dummy_data):
-                            metric_record = MetricData(**data)
-                            session.add(metric_record)
-                            inserted += 1
+                        # Create default admin user if no users exist
+                        try:
+                            users = db.get_all_users()
+                            if not users:
+                                from setup_database import create_default_user
+                                create_default_user(db, username="admin", password="admin123")
+                                st.success("✅ Default admin user created! Username: admin, Password: admin123")
+                        except:
+                            pass  # User creation is optional
+                        
+                        session = db.get_session()
+                        try:
+                            inserted = 0
+                            total = len(dummy_data)
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
                             
-                            # Commit in batches and update progress
-                            if inserted % 50 == 0:
-                                session.commit()
-                                progress = min((i + 1) / total, 1.0)
-                                progress_bar.progress(progress)
-                                status_text.text(f"Inserted {inserted}/{total} records...")
-                        
-                        session.commit()
-                        progress_bar.progress(1.0)
-                        status_text.text(f"Completed! Inserted {inserted} records.")
-                        
-                        # Refresh database manager
-                        st.session_state.db_manager = DatabaseManager(config)
-                        db = st.session_state.db_manager
-                        
-                        st.success(f"✅ Successfully inserted {inserted} dummy records!")
-                        
-                        # Show summary
-                        summary = db.get_summary_stats()
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Total Records", summary['total_records'])
-                        with col2:
-                            st.metric("Teams", summary['teams'])
-                        with col3:
-                            st.metric("Metrics", summary['metrics'])
-                        
-                        # Clear progress elements
-                        progress_bar.empty()
-                        status_text.empty()
-                        
-                    except Exception as e:
-                        session.rollback()
-                        st.error(f"Error inserting data: {str(e)}")
-                    finally:
-                        session.close()
-                        
-            except ImportError as e:
-                st.error(f"Could not import setup_database module: {str(e)}. Please ensure setup_database.py exists.")
-            except Exception as e:
-                st.error(f"Error initializing database: {str(e)}")
-    
-    st.markdown("---")
-    
-    st.subheader("Benchmark Configuration")
-    
-    benchmarks_data = load_benchmarks()
-    
-    if benchmarks_data:
-        st.info(f"Loaded {sum(len(v) for v in benchmarks_data.values())} benchmark metrics")
+                            for i, data in enumerate(dummy_data):
+                                metric_record = MetricData(**data)
+                                session.add(metric_record)
+                                inserted += 1
+                                
+                                # Commit in batches and update progress
+                                if inserted % 50 == 0:
+                                    session.commit()
+                                    progress = min((i + 1) / total, 1.0)
+                                    progress_bar.progress(progress)
+                                    status_text.text(f"Inserted {inserted}/{total} records...")
+                            
+                            session.commit()
+                            progress_bar.progress(1.0)
+                            status_text.text(f"Completed! Inserted {inserted} records.")
+                            
+                            # Refresh database manager
+                            st.session_state.db_manager = DatabaseManager(config)
+                            db = st.session_state.db_manager
+                            
+                            st.success(f"✅ Successfully inserted {inserted} dummy records!")
+                            
+                            # Show summary
+                            summary = db.get_summary_stats()
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Total Records", summary['total_records'])
+                            with col2:
+                                st.metric("Teams", summary['teams'])
+                            with col3:
+                                st.metric("Metrics", summary['metrics'])
+                            
+                            # Clear progress elements
+                            progress_bar.empty()
+                            status_text.empty()
+                            
+                        except Exception as e:
+                            session.rollback()
+                            st.error(f"Error inserting data: {str(e)}")
+                        finally:
+                            session.close()
+                            
+                except ImportError as e:
+                    st.error(f"Could not import setup_database module: {str(e)}. Please ensure setup_database.py exists.")
+                except Exception as e:
+                    st.error(f"Error initializing database: {str(e)}")
         
-        category = st.selectbox("Category", list(benchmarks_data.keys()))
+        st.markdown("---")
         
-        if category:
-            st.write(f"**Metrics in {category}:**")
-            for metric_name, metric_data in benchmarks_data[category].items():
-                st.write(f"- {metric_name}: {metric_data.get('value', 'N/A')} {metric_data.get('unit', '')}")
-    else:
-        st.warning("No benchmark data found. Please check benchmarks/industry_benchmarks.json")
+        st.subheader("Benchmark Configuration")
+        
+        benchmarks_data = load_benchmarks()
+        
+        if benchmarks_data:
+            st.info(f"Loaded {sum(len(v) for v in benchmarks_data.values())} benchmark metrics")
+            
+            category = st.selectbox("Category", list(benchmarks_data.keys()), key="benchmark_category")
+            
+            if category:
+                st.write(f"**Metrics in {category}:**")
+                for metric_name, metric_data in benchmarks_data[category].items():
+                    st.write(f"- {metric_name}: {metric_data.get('value', 'N/A')} {metric_data.get('unit', '')}")
+        else:
+            st.warning("No benchmark data found. Please check benchmarks/industry_benchmarks.json")
 
 
 if __name__ == "__main__":

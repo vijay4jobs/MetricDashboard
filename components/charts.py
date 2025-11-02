@@ -21,16 +21,20 @@ class ChartGenerator:
             'font': {'family': self.font_family, 'size': self.font_size, 'color': self.accent_colors['text']},
             'plot_bgcolor': self.accent_colors['surface'],
             'paper_bgcolor': self.accent_colors['background'],
-            'margin': dict(l=70, r=50, t=100, b=80),
+            'margin': dict(l=70, r=50, t=100, b=120),  # Increased bottom margin for legend
             'hovermode': 'x unified',
             'showlegend': True,
+            'autosize': True,  # Make charts adaptive
             'legend': {
                 'orientation': 'h',
                 'yanchor': 'bottom',
-                'y': -0.25,
+                'y': -0.35,  # Moved further down to prevent overlap
                 'xanchor': 'center',
                 'x': 0.5,
-                'font': {'size': self.font_size, 'family': self.font_family}
+                'font': {'size': self.font_size - 1, 'family': self.font_family},  # Slightly smaller font
+                'itemclick': 'toggleothers',
+                'itemdoubleclick': 'toggle',
+                'tracegroupgap': 10  # Space between legend items
             }
         }
     
@@ -63,6 +67,8 @@ class ChartGenerator:
         if title:
             layout['title'] = {'text': title, 'x': 0.5, 'xanchor': 'center',
                              'font': {'size': self.settings.FONT_SIZE_TITLE, 'color': self.accent_colors['text'], 'family': self.font_family}}
+        layout['autosize'] = True
+        layout['height'] = None  # Adaptive height
         fig.update_layout(**layout)
         
         fig.update_xaxes(
@@ -110,6 +116,8 @@ class ChartGenerator:
         if title:
             layout['title'] = {'text': title, 'x': 0.5, 'xanchor': 'center',
                              'font': {'size': self.settings.FONT_SIZE_TITLE, 'color': self.accent_colors['text'], 'family': self.font_family}}
+        layout['autosize'] = True
+        layout['height'] = None  # Adaptive height
         fig.update_layout(**layout)
         
         fig.update_xaxes(
@@ -145,12 +153,26 @@ class ChartGenerator:
         fig = px.scatter(df, x=x, y=y, color=color, size=size, title=title,
                         color_discrete_sequence=px.colors.qualitative.Set2)
         
-        fig.update_layout(
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            hovermode='closest',
-            xaxis_title=x.replace('_', ' ').title(),
-            yaxis_title=y.replace('_', ' ').title()
+        layout = self.default_layout.copy()
+        if title:
+            layout['title'] = {'text': title, 'x': 0.5, 'xanchor': 'center',
+                             'font': {'size': self.settings.FONT_SIZE_TITLE, 'color': self.accent_colors['text'], 'family': self.font_family}}
+        layout['hovermode'] = 'closest'
+        layout['autosize'] = True
+        layout['height'] = None
+        fig.update_layout(**layout)
+        
+        fig.update_xaxes(
+            showgrid=True, gridwidth=1, gridcolor=self.accent_colors['grid'],
+            showline=True, linewidth=2, linecolor=self.accent_colors['border'],
+            title={'text': x.replace('_', ' ').title(), 'font': {'size': self.font_size, 'color': self.accent_colors['text'], 'family': self.font_family, 'weight': 'bold'}},
+            tickfont={'size': self.font_size, 'family': self.font_family}
+        )
+        fig.update_yaxes(
+            showgrid=True, gridwidth=1, gridcolor=self.accent_colors['grid'],
+            showline=True, linewidth=2, linecolor=self.accent_colors['border'],
+            title={'text': y.replace('_', ' ').title(), 'font': {'size': self.font_size, 'color': self.accent_colors['text'], 'family': self.font_family, 'weight': 'bold'}},
+            tickfont={'size': self.font_size, 'family': self.font_family}
         )
         return fig
     
@@ -170,10 +192,22 @@ class ChartGenerator:
         fig = px.pie(df, values=values, names=names, title=title,
                     color_discrete_sequence=px.colors.qualitative.Set2)
         
-        fig.update_layout(
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-        )
+        layout = self.default_layout.copy()
+        if title:
+            layout['title'] = {'text': title, 'x': 0.5, 'xanchor': 'center',
+                             'font': {'size': self.settings.FONT_SIZE_TITLE, 'color': self.accent_colors['text'], 'family': self.font_family}}
+        layout['autosize'] = True
+        layout['height'] = None
+        layout['legend'] = {
+            'orientation': 'v',  # Vertical for pie charts
+            'yanchor': 'middle',
+            'y': 0.5,
+            'xanchor': 'left',
+            'x': 1.05,
+            'font': {'size': self.font_size - 1, 'family': self.font_family}
+        }
+        layout['margin'] = dict(l=70, r=150, t=100, b=80)  # Extra right margin for legend
+        fig.update_layout(**layout)
         return fig
     
     def team_comparison_chart(self, df: pd.DataFrame, teams: List[str],
@@ -195,10 +229,12 @@ class ChartGenerator:
         if len(filtered_df) > 0:
             filtered_df = filtered_df.groupby(['team', 'metric'])['value'].mean().reset_index()
         
-        # Responsive height based on data size
+        # Responsive height based on data size and number of teams
         num_metrics = len(metrics)
-        base_height = 500
-        responsive_height = max(base_height, num_metrics * 60 + 200)
+        num_teams = len(teams)
+        base_height = 400
+        # Adjust height based on number of metrics and teams
+        responsive_height = max(base_height, num_metrics * 50 + num_teams * 30 + 250)
         
         # Use accent color palette
         accent_palette = [
@@ -215,23 +251,43 @@ class ChartGenerator:
                         barmode='group', title='Team Comparison by Metric',
                         color_discrete_sequence=accent_palette,
                         labels={'metric': 'Metric', 'value': 'Average Value', 'team': 'Team'},
-                        text='value',
-                        height=responsive_height)
+                        text='value')
             fig.update_traces(texttemplate='%{text:.2f}', textposition='outside')
         else:
             fig = px.line(filtered_df, x='metric', y='value', color='team',
                          title='Team Comparison by Metric',
                          color_discrete_sequence=accent_palette,
                          labels={'metric': 'Metric', 'value': 'Average Value', 'team': 'Team'},
-                         markers=True,
-                         height=responsive_height)
+                         markers=True)
         
         layout = self.default_layout.copy()
         layout['title'] = {'text': 'Team Comparison by Metric', 
                           'x': 0.5, 'xanchor': 'center', 
                           'font': {'size': self.settings.FONT_SIZE_TITLE, 'color': self.accent_colors['text'], 'family': self.font_family}}
-        layout['height'] = responsive_height
+        
+        # Calculate bottom margin - need extra space for legend and potentially rotated x-axis labels
+        base_bottom_margin = max(120, 80 + (num_teams - 1) * 25)  # More teams = more legend space needed
+        
+        # For bar charts, add extra margin for rotated x-axis labels
+        if chart_type == "bar":
+            max_label_length = max([len(str(m)) for m in metrics]) if metrics else 0
+            # Rotated labels need more bottom space - calculate based on label length
+            label_margin = max(60, min(120, max_label_length * 4))
+            base_bottom_margin = max(base_bottom_margin, label_margin + 100)
+        
+        layout['margin'] = dict(
+            l=70, 
+            r=50, 
+            t=100, 
+            b=base_bottom_margin
+        )
         layout['autosize'] = True
+        layout['height'] = responsive_height
+        # Adjust legend position based on number of teams
+        if num_teams > 4:
+            # Many teams - move legend further down
+            layout['legend']['y'] = -0.45
+            layout['margin']['b'] = max(layout['margin']['b'], 100 + num_teams * 30)
         fig.update_layout(**layout)
         
         # Capitalize metric names on x-axis
@@ -240,9 +296,11 @@ class ChartGenerator:
                 showgrid=True, gridwidth=1, gridcolor=self.accent_colors['grid'],
                 showline=True, linewidth=2, linecolor=self.accent_colors['border'],
                 title={'text': 'Metric', 'font': {'size': self.font_size, 'color': self.accent_colors['text'], 'family': self.font_family, 'weight': 'bold'}},
-                tickfont={'size': self.font_size, 'family': self.font_family},
-                tickangle=-45,
-                tickmode='linear'
+                tickfont={'size': self.font_size - 1, 'family': self.font_family},  # Slightly smaller font
+                tickangle=-45,  # Rotate labels 45 degrees to prevent overlap
+                automargin=True,  # Automatically adjust margins for labels
+                showticklabels=True,  # Ensure labels are shown
+                type='category'  # Treat as categorical data for better label display
             )
         else:
             fig.update_xaxes(
@@ -311,6 +369,7 @@ class ChartGenerator:
                           'font': {'size': self.settings.FONT_SIZE_TITLE, 'color': self.accent_colors['text'], 'family': self.font_family}}
         layout['barmode'] = 'group'
         layout['autosize'] = True
+        layout['height'] = None  # Adaptive height
         fig.update_layout(**layout)
         
         fig.update_xaxes(
@@ -357,13 +416,26 @@ class ChartGenerator:
                 name=team
             ))
         
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(visible=True)
-            ),
-            showlegend=True,
-            title="Radar Chart: Team Comparison Across Metrics"
+        layout = self.default_layout.copy()
+        layout['title'] = {'text': 'Radar Chart: Team Comparison Across Metrics', 
+                          'x': 0.5, 'xanchor': 'center', 
+                          'font': {'size': self.settings.FONT_SIZE_TITLE, 'color': self.accent_colors['text'], 'family': self.font_family}}
+        layout['polar'] = dict(
+            radialaxis=dict(visible=True)
         )
+        layout['autosize'] = True
+        layout['height'] = None  # Adaptive height
+        # For radar charts, vertical legend works better
+        layout['legend'] = {
+            'orientation': 'v',
+            'yanchor': 'middle',
+            'y': 0.5,
+            'xanchor': 'left',
+            'x': 1.05,
+            'font': {'size': self.font_size - 1, 'family': self.font_family}
+        }
+        layout['margin'] = dict(l=70, r=150, t=100, b=80)  # Extra right margin for legend
+        fig.update_layout(**layout)
         
         return fig
     
@@ -404,16 +476,28 @@ class ChartGenerator:
                          labels={'date': 'Date', 'value': 'Value'},
                          markers=True)
         
-        # Responsive height for time series
-        num_data_points = len(filtered_df)
-        responsive_height = max(500, min(800, num_data_points * 2))
+        # Responsive height for time series based on number of teams
+        num_teams = len(filtered_df['team'].unique()) if 'team' in filtered_df.columns else 1
+        base_height = 400
+        responsive_height = max(base_height, min(700, 350 + num_teams * 40))
         
         layout = self.default_layout.copy()
         layout['title'] = {'text': f'{metric} Over Time', 
                           'x': 0.5, 'xanchor': 'center', 
                           'font': {'size': self.settings.FONT_SIZE_TITLE, 'color': self.accent_colors['text'], 'family': self.font_family}}
-        layout['height'] = responsive_height
         layout['autosize'] = True
+        layout['height'] = responsive_height
+        # Adjust bottom margin based on number of teams
+        layout['margin'] = dict(
+            l=70, 
+            r=50, 
+            t=100, 
+            b=max(120, 80 + (num_teams - 1) * 25)
+        )
+        # Adjust legend position if many teams
+        if num_teams > 4:
+            layout['legend']['y'] = -0.45
+            layout['margin']['b'] = max(150, 100 + num_teams * 30)
         fig.update_layout(**layout)
         
         fig.update_xaxes(

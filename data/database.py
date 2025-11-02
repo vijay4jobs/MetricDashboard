@@ -1,5 +1,5 @@
 """Database connection and query interface."""
-from sqlalchemy import create_engine, MetaData, Table, Column, String, Float, DateTime, select, inspect
+from sqlalchemy import create_engine, MetaData, Table, Column, String, Float, DateTime, select, inspect, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
@@ -7,9 +7,28 @@ import pandas as pd
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import streamlit as st
+import hashlib
+import secrets
 from config.settings import DatabaseConfig
 
 Base = declarative_base()
+
+
+class User(Base):
+    """SQLAlchemy model for user authentication."""
+    __tablename__ = 'users'
+    
+    id = Column(String, primary_key=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    email = Column(String)
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime)
+    
+    def __repr__(self):
+        return f"<User(username={self.username}, is_active={self.is_active}, is_admin={self.is_admin})>"
 
 
 class MetricData(Base):
@@ -215,6 +234,135 @@ class DatabaseManager:
                 'last_updated': session.query(MetricData.created_at).order_by(
                     MetricData.created_at.desc()).first()[0] if total_records > 0 else None
             }
+        finally:
+            session.close()
+    
+    # Authentication methods
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Hash a password using SHA-256 with salt."""
+        salt = secrets.token_hex(16)
+        hash_obj = hashlib.sha256((password + salt).encode())
+        return f"{salt}:{hash_obj.hexdigest()}"
+    
+    @staticmethod
+    def verify_password(password: str, password_hash: str) -> bool:
+        """Verify a password against a hash."""
+        try:
+            salt, stored_hash = password_hash.split(':')
+            hash_obj = hashlib.sha256((password + salt).encode())
+            return hash_obj.hexdigest() == stored_hash
+        except:
+            return False
+    
+    def create_user(self, username: str, password: str, email: Optional[str] = None, is_admin: bool = False) -> bool:
+        """Create a new user account.
+        
+        Args:
+            username: Username for the account
+            password: Plain text password (will be hashed)
+            email: Optional email address
+            is_admin: Whether user has admin privileges (default: False)
+        """
+        session = self.get_session()
+        try:
+            # Check if user already exists
+            if session.query(User).filter(User.username == username).first():
+                return False
+            
+            import uuid
+            user = User(
+                id=str(uuid.uuid4()),
+                username=username,
+                password_hash=self.hash_password(password),
+                email=email,
+                is_active=True,
+                is_admin=is_admin
+            )
+            session.add(user)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            st.error(f"Error creating user: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def authenticate_user(self, username: str, password: str) -> Optional[dict]:
+        """Authenticate a user and return user info dict if successful.
+        
+        Returns:
+            Dictionary with user info (username, email, etc.) or None if authentication fails
+        """
+        session = self.get_session()
+        try:
+            user = session.query(User).filter(User.username == username).first()
+            if user and user.is_active and self.verify_password(password, user.password_hash):
+                # Update last login
+                user.last_login = datetime.utcnow()
+                session.commit()
+                
+                # Extract user info before closing session
+                user_info = {
+                    'username': user.username,
+                    'email': user.email,
+                    'is_active': user.is_active,
+                    'is_admin': user.is_admin,
+                    'id': user.id
+                }
+                
+                # Expunge the object from session to avoid detached instance errors
+                session.expunge(user)
+                return user_info
+            return None
+        except Exception as e:
+            st.error(f"Authentication error: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def get_user(self, username: str) -> Optional[dict]:
+        """Get user by username as dictionary."""
+        session = self.get_session()
+        try:
+            user = session.query(User).filter(User.username == username).first()
+            if user:
+                user_info = {
+                    'username': user.username,
+                    'email': user.email,
+                    'is_active': user.is_active,
+                    'is_admin': user.is_admin,
+                    'id': user.id,
+                    'created_at': user.created_at,
+                    'last_login': user.last_login
+                }
+                session.expunge(user)
+                return user_info
+            return None
+        finally:
+            session.close()
+    
+    def get_all_users(self) -> List[dict]:
+        """Get all active users as dictionaries."""
+        session = self.get_session()
+        try:
+            users = session.query(User).filter(User.is_active == True).all()
+            # Extract user data before closing session
+            user_list = []
+            for user in users:
+                user_list.append({
+                    'username': user.username,
+                    'email': user.email,
+                    'is_active': user.is_active,
+                    'is_admin': user.is_admin,
+                    'id': user.id,
+                    'created_at': user.created_at,
+                    'last_login': user.last_login
+                })
+                # Expunge to avoid detached instance errors
+                session.expunge(user)
+            return user_list
         finally:
             session.close()
 

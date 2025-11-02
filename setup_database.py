@@ -1,14 +1,19 @@
 """Script to create database tables and insert dummy data."""
 
 import sys
+import io
 from datetime import datetime, timedelta
 import random
 import uuid
 from config.settings import DatabaseConfig, Settings
-from data.database import DatabaseManager, MetricData, Base
+from data.database import DatabaseManager, MetricData, Base, User
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# Fix Unicode encoding for Windows console
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 
 def create_dummy_data(num_weeks: int = 26):
@@ -194,6 +199,11 @@ def initialize_database(database_path: str = "metrics.db", clear_existing: bool 
 
             print(f"\nTeams: {', '.join(teams)}")
             print(f"\nMetrics: {', '.join(metrics[:5])}... ({len(metrics)} total)")
+            
+            # Create default admin user
+            print("\nCreating default admin user...")
+            create_default_user(db_manager, username="admin", password="admin123")
+            
             print("\n✓ Database initialization complete!")
             print(f"Database file: {config.database}")
 
@@ -206,6 +216,36 @@ def initialize_database(database_path: str = "metrics.db", clear_existing: bool 
         error_msg = f"Error: {str(e)}"
         print(f"✗ {error_msg}")
         return False, error_msg, {}
+
+
+def create_default_user(db_manager, username: str = "admin", password: str = "admin123"):
+    """Create a default admin user for login."""
+    try:
+        from data.database import User
+        session = db_manager.get_session()
+        
+        # Check if user already exists
+        existing_user = session.query(User).filter(User.username == username).first()
+        if existing_user:
+            print(f"User '{username}' already exists. Skipping user creation.")
+            session.close()
+            return False
+        
+        # Create user with admin privileges
+        if db_manager.create_user(username, password, None, is_admin=True):
+            print(f"✅ Default user created successfully!")
+            print(f"   Username: {username}")
+            print(f"   Password: {password}")
+            print(f"   ⚠️  Please change the default password after first login!")
+            session.close()
+            return True
+        else:
+            print(f"❌ Failed to create default user")
+            session.close()
+            return False
+    except Exception as e:
+        print(f"❌ Error creating default user: {str(e)}")
+        return False
 
 
 if __name__ == "__main__":
